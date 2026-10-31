@@ -4,6 +4,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local viewport = workspace.CurrentCamera.ViewportSize
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "KOT HUB"
@@ -18,6 +20,13 @@ frame.BorderSizePixel = 0
 frame.Active = true
 frame.Draggable = true
 frame.Parent = gui
+if isMobile then
+    local topScale = Instance.new("UIScale")
+    topScale.Scale = 0.65
+    topScale.Parent = frame
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.Position = UDim2.new(0.5, 0, 0, 30)
+end
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
@@ -77,6 +86,19 @@ menu.BorderSizePixel = 5
 menu.Active = true
 menu.Draggable = true
 menu.Parent = root
+local BASE_W, BASE_H = 600, 700
+local MENU_SCALE = isMobile and 0.5 or 1
+local maxW = viewport.X * 0.95
+local maxH = viewport.Y * 0.95
+if BASE_W * MENU_SCALE > maxW then MENU_SCALE = math.min(MENU_SCALE, maxW / BASE_W) end
+if BASE_H * MENU_SCALE > maxH then MENU_SCALE = math.min(MENU_SCALE, maxH / BASE_H) end
+
+local menuScaleObj = Instance.new("UIScale")
+menuScaleObj.Scale = MENU_SCALE
+menuScaleObj.Parent = menu
+
+menu.AnchorPoint = Vector2.new(0.5, 0.5)
+menu.Position = UDim2.new(0.5, 0, 0.5, 0)
 
 local menuCorner = Instance.new("UICorner")
 menuCorner.CornerRadius = UDim.new(0, 10)
@@ -1139,6 +1161,7 @@ local GeneratorUI = (function()
     local HEIGHT_OFF   = 4
 
     local enabled = false
+    local lastRefreshCheck = 0
 
     local camera = workspace.CurrentCamera
 
@@ -1314,10 +1337,18 @@ local GeneratorUI = (function()
             return
         end
 
+        -- Принудительная проверка раз в 1 секунду (ловит рестарт карты)
+        if tick() - lastRefreshCheck > 1 then
+            lastRefreshCheck = tick()
+            local currentPath = findGeneratorsPath()
+            if currentPath ~= GENERATORS_PATH then
+                refreshGenerators()
+            end
+        end
+
         if not pathStillValid() or not listStillValid() then
             refreshGenerators()
         end
-
         local camPos = camera.CFrame.Position
 
         for i, data in ipairs(generators) do
@@ -1392,6 +1423,7 @@ local PumpkinESP = (function()
     local HEIGHT_OFF  = 3
 
     local enabled = false
+    local lastRefreshCheck = 0
 
     local camera = workspace.CurrentCamera
     local CoreGui = game:GetService("CoreGui")
@@ -1534,7 +1566,16 @@ local PumpkinESP = (function()
             return
         end
 
-               if not pathStillValid() or not listStillValid() then
+        -- Принудительная проверка раз в 1 секунду (ловит рестарт карты)
+        if tick() - lastRefreshCheck > 1 then
+            lastRefreshCheck = tick()
+            local currentPath = findPumpkinsPath()
+            if currentPath ~= PUMPKINS_PATH then
+                refreshPumpkins()
+            end
+        end
+
+        if not pathStillValid() or not listStillValid() then
             refreshPumpkins()
         end
         -- Если после пересбора всё ещё пусто и путь есть — попробуем позже
