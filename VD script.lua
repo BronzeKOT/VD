@@ -891,13 +891,106 @@ local Credits, scrlC = makePanel("Credits P")
 makeCard(scrlK, "Killer Function 1", "Placeholder")
 makeCard(scrlK, "Killer Function 2", "Placeholder")
 
-makeCard(scrlW, "World Function 1", "Placeholder")
-
 makeCard(scrlSr, "Server Function 1", "Placeholder")
 
 makeCard(scrlSt, "Settings Function 1", "Placeholder")
 
 makeCard(scrlC, "Credits", "KOT HUB")
+
+-- ============================================================== WORLD: Bright (FB)
+local BrightEnabled = false
+local BrightBackup = nil
+
+local function setBright(on)
+    local Lighting = game:GetService("Lighting")
+    
+    if on then
+        if not BrightBackup then
+            BrightBackup = {
+                Brightness = Lighting.Brightness,
+                ExposureCompensation = Lighting.ExposureCompensation,
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+            }
+        end
+        Lighting.Brightness = 6
+        Lighting.ExposureCompensation = 2
+        Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+        Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+        BrightEnabled = true
+    else
+        if BrightBackup then
+            Lighting.Brightness = BrightBackup.Brightness
+            Lighting.ExposureCompensation = BrightBackup.ExposureCompensation
+            Lighting.Ambient = BrightBackup.Ambient
+            Lighting.OutdoorAmbient = BrightBackup.OutdoorAmbient
+            BrightBackup = nil
+        end
+        BrightEnabled = false
+    end
+end
+
+local brightBtn = makeCard(scrlW, "FB (Bright)", "Яркое освещение — вкл/выкл")
+brightBtn.MouseButton1Click:Connect(function()
+    setBright(not BrightEnabled)
+    brightBtn.Text = BrightEnabled and "ON" or "OFF"
+    brightBtn.BackgroundColor3 = BrightEnabled and Color3.fromRGB(30,150,30) or Color3.fromRGB(180,30,30)
+end)
+
+-- ============================================================== WORLD: NoFog
+local NoFogEnabled = false
+local NoFogBackup = nil
+
+local function setNoFog(on)
+    local Lighting = game:GetService("Lighting")
+    
+    if on then
+        if not NoFogBackup then
+            NoFogBackup = {
+                FogStart = Lighting.FogStart,
+                FogEnd = Lighting.FogEnd,
+                FogColor = Lighting.FogColor,
+            }
+            -- Сохраняем плотность атмосфер (если есть)
+            NoFogBackup.Atmospheres = {}
+            for _, v in ipairs(Lighting:GetChildren()) do
+                if v:IsA("Atmosphere") then
+                    NoFogBackup.Atmospheres[v] = v.Density
+                end
+            end
+        end
+        -- Убираем туман
+        Lighting.FogStart = 100000
+        Lighting.FogEnd = 100000
+        -- Атмосферы в 0
+        for atm, _ in pairs(NoFogBackup.Atmospheres) do
+            if atm and atm.Parent then
+                atm.Density = 0
+            end
+        end
+        NoFogEnabled = true
+    else
+        if NoFogBackup then
+            Lighting.FogStart = NoFogBackup.FogStart
+            Lighting.FogEnd = NoFogBackup.FogEnd
+            Lighting.FogColor = NoFogBackup.FogColor
+            for atm, dens in pairs(NoFogBackup.Atmospheres) do
+                if atm and atm.Parent then
+                    atm.Density = dens
+                end
+            end
+            NoFogBackup = nil
+        end
+        NoFogEnabled = false
+    end
+end
+
+local nofogBtn = makeCard(scrlW, "NoFog", "Убирает туман — вкл/выкл")
+nofogBtn.MouseButton1Click:Connect(function()
+    setNoFog(not NoFogEnabled)
+    nofogBtn.Text = NoFogEnabled and "ON" or "OFF"
+    nofogBtn.BackgroundColor3 = NoFogEnabled and Color3.fromRGB(30,150,30) or Color3.fromRGB(180,30,30)
+end)
 
 -- ============================================================== TROLL: Jerk Off
 local JerkState = {
@@ -1034,6 +1127,502 @@ cursorBtn.MouseButton1Click:Connect(function()
     cursorBtn.Text = CursorSettings.enabled and "ON" or "OFF"
     cursorBtn.BackgroundColor3 = CursorSettings.enabled and Color3.fromRGB(30,150,30) or Color3.fromRGB(180,30,30)
     CursorGui.Enabled = CursorSettings.enabled
+end)
+
+-- ============================================================== GENERATOR PROGRESS UI (modules)
+local GeneratorUI = (function()
+    local RED_COLOR    = Color3.fromRGB(200, 30, 30)
+    local GREEN_COLOR  = Color3.fromRGB(50, 200, 70)
+    local GRAY_COLOR   = Color3.fromRGB(55, 55, 55)
+    local SIZE         = 50
+    local MAX_DIST     = 500
+    local HEIGHT_OFF   = 4
+
+    local enabled = false
+
+    local camera = workspace.CurrentCamera
+
+    -- // Удаляем старый, если остался
+    local CoreGui = game:GetService("CoreGui")
+    local old = CoreGui:FindFirstChild("GeneratorUI")
+    if old then old:Destroy() end
+    local oldP = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+    if oldP then
+        local o = oldP:FindFirstChild("GeneratorUI")
+        if o then o:Destroy() end
+    end
+
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "GeneratorUI"
+    screen.ResetOnSpawn = false
+    screen.IgnoreGuiInset = true
+    screen.DisplayOrder = 999
+    screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    -- На CoreGui (как остальной хаб)
+    local ok = pcall(function() screen.Parent = CoreGui end)
+    if not ok then
+        screen.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    local function createCircle()
+        local outer = Instance.new("Frame")
+        outer.Size = UDim2.fromOffset(SIZE + 6, SIZE + 6)
+        outer.AnchorPoint = Vector2.new(0.5, 0.5)
+        outer.BackgroundColor3 = RED_COLOR
+        outer.BackgroundTransparency = 0
+        outer.BorderSizePixel = 0
+        outer.Visible = false
+        outer.Parent = screen
+
+        local oc = Instance.new("UICorner")
+        oc.CornerRadius = UDim.new(1, 0)
+        oc.Parent = outer
+
+        local outerStroke = Instance.new("UIStroke")
+        outerStroke.Color = RED_COLOR
+        outerStroke.Thickness = 1
+        outerStroke.Transparency = 0.3
+        outerStroke.Parent = outer
+
+        local inner = Instance.new("Frame")
+        inner.Size = UDim2.fromOffset(SIZE, SIZE)
+        inner.AnchorPoint = Vector2.new(0.5, 0.5)
+        inner.Position = UDim2.fromScale(0.5, 0.5)
+        inner.BackgroundColor3 = GRAY_COLOR
+        inner.BackgroundTransparency = 0.05
+        inner.BorderSizePixel = 0
+        inner.Parent = outer
+
+        local ic = Instance.new("UICorner")
+        ic.CornerRadius = UDim.new(1, 0)
+        ic.Parent = inner
+
+        local gradient = Instance.new("UIGradient")
+        gradient.Rotation = 90
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 90, 90)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(55, 55, 55)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 30)),
+        })
+        gradient.Parent = inner
+
+        local scratches = Instance.new("Frame")
+        scratches.Size = UDim2.fromScale(1, 1)
+        scratches.BackgroundTransparency = 1
+        scratches.ClipsDescendants = true
+        scratches.Parent = inner
+
+        local function scratch(rot, len, trans)
+            local s = Instance.new("Frame")
+            s.Size = UDim2.new(len, 0, 0, 1)
+            s.AnchorPoint = Vector2.new(0.5, 0.5)
+            s.Position = UDim2.fromScale(0.5, 0.5)
+            s.Rotation = rot
+            s.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            s.BackgroundTransparency = trans
+            s.BorderSizePixel = 0
+            s.Parent = scratches
+        end
+        scratch(35, 0.7, 0.88)
+        scratch(-55, 0.5, 0.9)
+        scratch(120, 0.4, 0.92)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.Text = "0%"
+        label.TextColor3 = Color3.fromRGB(235, 235, 235)
+        label.Font = Enum.Font.Antique
+        label.TextScaled = true
+        label.Rotation = -3
+        label.Parent = inner
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(0, 0, 0)
+        stroke.Thickness = 1.5
+        stroke.Transparency = 0.15
+        stroke.Parent = label
+
+        local padding = Instance.new("UIPadding")
+        padding.PaddingLeft = UDim.new(0.15, 0)
+        padding.PaddingRight = UDim.new(0.15, 0)
+        padding.PaddingTop = UDim.new(0.15, 0)
+        padding.PaddingBottom = UDim.new(0.15, 0)
+        padding.Parent = label
+
+        return outer, inner, stroke, label
+    end
+
+    local generators, circles = {}, {}
+    local GENERATORS_PATH = nil
+
+      local function findGeneratorsPath()
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            local g = map:FindFirstChild("Generator") or map:FindFirstChild("Generators")
+            if g then return g end
+        end
+        return workspace:FindFirstChild("Generator") or workspace:FindFirstChild("Generators")
+    end
+
+    local function getPart(gen)
+        return gen:IsA("BasePart") and gen or gen.PrimaryPart or gen:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function refreshGenerators()
+        for _, c in ipairs(circles) do
+            if c.outer then c.outer:Destroy() end
+        end
+        circles = {}
+        generators = {}
+
+        GENERATORS_PATH = findGeneratorsPath()
+        if not GENERATORS_PATH then return end
+
+        for _, gen in ipairs(GENERATORS_PATH:GetChildren()) do
+            local part = getPart(gen)
+            if part then
+                table.insert(generators, {gen = gen, part = part})
+            end
+        end
+
+        for i = 1, #generators do
+            local outer, inner, stroke, label = createCircle()
+            circles[i] = {outer = outer, inner = inner, stroke = stroke, label = label}
+        end
+    end
+
+    local function pathStillValid()
+        if not GENERATORS_PATH or not GENERATORS_PATH.Parent then return false end
+        return findGeneratorsPath() == GENERATORS_PATH
+    end
+
+    local function listStillValid()
+        for _, data in ipairs(generators) do
+            if not data.part or not data.part.Parent then return false end
+            if not data.gen or not data.gen.Parent then return false end
+        end
+        return true
+    end
+
+    local RS = game:GetService("RunService")
+    RS.RenderStepped:Connect(function()
+        if not enabled then
+            for _, c in ipairs(circles) do
+                if c.outer then c.outer.Visible = false end
+            end
+            return
+        end
+
+        if not pathStillValid() or not listStillValid() then
+            refreshGenerators()
+        end
+
+        local camPos = camera.CFrame.Position
+
+        for i, data in ipairs(generators) do
+            local circle = circles[i]
+            if not circle then continue end
+
+            local part = data.part
+            if not part or not part.Parent then
+                circle.outer.Visible = false
+                continue
+            end
+
+            local worldPos = part.Position + Vector3.new(0, HEIGHT_OFF, 0)
+
+            if (worldPos - camPos).Magnitude > MAX_DIST then
+                circle.outer.Visible = false
+                continue
+            end
+
+            local screenPos, onScreen = camera:WorldToViewportPoint(worldPos)
+            if not onScreen or screenPos.Z < 0 then
+                circle.outer.Visible = false
+                continue
+            end
+
+            circle.outer.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
+
+            local completed = data.gen:GetAttribute("Completed") or false
+            local progress  = data.gen:GetAttribute("RepairProgress") or 0
+            local percent = math.clamp(math.floor(progress + 0.5), 0, 100)
+            local targetColor = completed and GREEN_COLOR or RED_COLOR
+            if completed then percent = 100 end
+
+            circle.label.Text = percent .. "%"
+            circle.outer.BackgroundColor3 = circle.outer.BackgroundColor3:Lerp(targetColor, 0.2)
+            circle.stroke.Color = circle.outer.BackgroundColor3
+
+            circle.outer.Visible = true
+        end
+    end)
+
+    local api = {}
+
+    function api.setEnabled(state)
+        enabled = state
+        if not enabled then
+            for _, c in ipairs(circles) do
+                if c.outer then c.outer.Visible = false end
+            end
+        else
+            refreshGenerators()
+        end
+        return enabled
+    end
+
+    function api.toggle()
+        return api.setEnabled(not enabled)
+    end
+
+    function api.enable()  api.setEnabled(true)  end
+    function api.disable() api.setEnabled(false) end
+    function api.isEnabled() return enabled end
+
+    return api
+end)()
+
+-- ============================================================== PUMPKIN ESP (modules)
+local PumpkinESP = (function()
+    local ORANGE      = Color3.fromRGB(255, 140, 0)
+    local SIZE        = 40
+    local MAX_DIST    = 500
+    local HEIGHT_OFF  = 3
+
+    local enabled = false
+
+    local camera = workspace.CurrentCamera
+    local CoreGui = game:GetService("CoreGui")
+
+    local old = CoreGui:FindFirstChild("PumpkinESP")
+    if old then old:Destroy() end
+    local plrGui = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+    if plrGui then
+        local o = plrGui:FindFirstChild("PumpkinESP")
+        if o then o:Destroy() end
+    end
+
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "PumpkinESP"
+    screen.ResetOnSpawn = false
+    screen.IgnoreGuiInset = true
+    screen.DisplayOrder = 999
+    screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    local ok = pcall(function() screen.Parent = CoreGui end)
+    if not ok then
+        screen.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    local function createMarker()
+        -- Внешний круг (оранжевый ободок)
+        local outer = Instance.new("Frame")
+        outer.Size = UDim2.fromOffset(SIZE + 4, SIZE + 4)
+        outer.AnchorPoint = Vector2.new(0.5, 0.5)
+        outer.BackgroundColor3 = ORANGE
+        outer.BackgroundTransparency = 0.1
+        outer.BorderSizePixel = 0
+        outer.Visible = false
+        outer.Parent = screen
+
+        local oc = Instance.new("UICorner")
+        oc.CornerRadius = UDim.new(1, 0)
+        oc.Parent = outer
+
+        local glow = Instance.new("UIStroke")
+        glow.Color = ORANGE
+        glow.Thickness = 2
+        glow.Transparency = 0.4
+        glow.Parent = outer
+
+        -- Внутренний тёмный диск
+        local inner = Instance.new("Frame")
+        inner.Size = UDim2.fromOffset(SIZE - 8, SIZE - 8)
+        inner.AnchorPoint = Vector2.new(0.5, 0.5)
+        inner.Position = UDim2.fromScale(0.5, 0.5)
+        inner.BackgroundColor3 = Color3.fromRGB(30, 20, 10)
+        inner.BackgroundTransparency = 0.1
+        inner.BorderSizePixel = 0
+        inner.Parent = outer
+
+        local ic = Instance.new("UICorner")
+        ic.CornerRadius = UDim.new(1, 0)
+        ic.Parent = inner
+
+        -- Иконка тыквы (просто точка/символ — можно заменить)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.Text = "🎃"
+        label.TextColor3 = ORANGE
+        label.TextScaled = true
+        label.Parent = inner
+
+        return outer, inner, label
+    end
+
+    local pumpkins, markers = {}, {}
+    local PUMPKINS_PATH = nil
+
+    local function findPumpkinsPath()
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            local p = map:FindFirstChild("Pumpkins") or map:FindFirstChild("Pumpkin")
+            if p then return p end
+        end
+        return workspace:FindFirstChild("Pumpkins") or workspace:FindFirstChild("Pumpkin")
+    end
+
+    local function getPart(obj)
+        return obj:IsA("BasePart") and obj or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function refreshPumpkins()
+        for _, m in ipairs(markers) do
+            if m.outer then m.outer:Destroy() end
+        end
+        markers = {}
+        pumpkins = {}
+
+        PUMPKINS_PATH = findPumpkinsPath()
+        if not PUMPKINS_PATH then return end
+
+        for _, p in ipairs(PUMPKINS_PATH:GetChildren()) do
+            local part = getPart(p)
+            if part then
+                table.insert(pumpkins, {obj = p, part = part})
+            end
+        end
+
+        for i = 1, #pumpkins do
+            local outer, inner, label = createMarker()
+            markers[i] = {outer = outer, inner = inner, label = label}
+        end
+    end
+
+    local function pathStillValid()
+        if not PUMPKINS_PATH or not PUMPKINS_PATH.Parent then return false end
+        return findPumpkinsPath() == PUMPKINS_PATH
+    end
+
+       local function listStillValid()
+        -- Если путь отвалился — пересобрать
+        if not PUMPKINS_PATH or not PUMPKINS_PATH.Parent then return false end
+
+        for _, data in ipairs(pumpkins) do
+            -- Объект/часть удалены
+            if not data.part or not data.part.Parent then return false end
+            if not data.obj or not data.obj.Parent then return false end
+
+            -- Объект вышел из папки (перемещён/сломан)
+            if data.obj.Parent ~= PUMPKINS_PATH then return false end
+
+            -- Объект невидим / отключён (сломан, но не удалён)
+            if data.part.Transparency >= 0.95 then return false end
+            if data.part.Parent == nil then return false end
+        end
+        return true
+    end
+
+    local RS = game:GetService("RunService")
+    RS.RenderStepped:Connect(function()
+        if not enabled then
+            for _, m in ipairs(markers) do
+                if m.outer then m.outer.Visible = false end
+            end
+            return
+        end
+
+               if not pathStillValid() or not listStillValid() then
+            refreshPumpkins()
+        end
+        -- Если после пересбора всё ещё пусто и путь есть — попробуем позже
+        if enabled and #pumpkins == 0 and PUMPKINS_PATH and #PUMPKINS_PATH:GetChildren() > 0 then
+            refreshPumpkins()
+        end
+
+        local camPos = camera.CFrame.Position
+
+               for i, data in ipairs(pumpkins) do
+            local marker = markers[i]
+            if not marker then continue end
+
+            local part = data.part
+            if not part or not part.Parent then
+                marker.outer.Visible = false
+                continue
+            end
+
+            -- Пропала из папки / сломана / невидима → спрятать маркер
+            if data.obj.Parent ~= PUMPKINS_PATH
+                or part.Transparency >= 0.95
+                or data.obj:GetAttribute("Broken") == true
+                or data.obj:GetAttribute("Destroyed") == true
+            then
+                marker.outer.Visible = false
+                continue
+            end
+
+            local worldPos = part.Position + Vector3.new(0, HEIGHT_OFF, 0)
+
+            if (worldPos - camPos).Magnitude > MAX_DIST then
+                marker.outer.Visible = false
+                continue
+            end
+
+            local screenPos, onScreen = camera:WorldToViewportPoint(worldPos)
+            if not onScreen or screenPos.Z < 0 then
+                marker.outer.Visible = false
+                continue
+            end
+
+            marker.outer.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
+
+            -- Пульсация ободка
+            local pulse = 0.15 + math.abs(math.sin(tick() * 3)) * 0.25
+            marker.outer.BackgroundTransparency = pulse
+
+            marker.outer.Visible = true
+        end
+    end)
+
+    local api = {}
+
+    function api.setEnabled(state)
+        enabled = state
+        if not enabled then
+            for _, m in ipairs(markers) do
+                if m.outer then m.outer.Visible = false end
+            end
+        else
+            refreshPumpkins()
+        end
+        return enabled
+    end
+
+    function api.toggle() return api.setEnabled(not enabled) end
+    function api.enable()  api.setEnabled(true)  end
+    function api.disable() api.setEnabled(false) end
+    function api.isEnabled() return enabled end
+
+    return api
+end)()
+
+-- ============================================================== ESP GENERATOR UI
+local genUIBtn = makeCard(scrlE, "Generator Progress", "Кружки с % над генераторами")
+genUIBtn.MouseButton1Click:Connect(function()
+    local on = GeneratorUI.toggle()
+    genUIBtn.Text = on and "ON" or "OFF"
+    genUIBtn.BackgroundColor3 = on and Color3.fromRGB(30,150,30) or Color3.fromRGB(180,30,30)
+end)
+
+-- ============================================================== ESP PUMPKIN
+local pumpkinBtn = makeCard(scrlE, "Pumpkin ESP", "Оранжевые маркеры на тыквах")
+pumpkinBtn.MouseButton1Click:Connect(function()
+    local on = PumpkinESP.toggle()
+    pumpkinBtn.Text = on and "ON" or "OFF"
+    pumpkinBtn.BackgroundColor3 = on and Color3.fromRGB(30,150,30) or Color3.fromRGB(180,30,30)
 end)
 
 -- ============================================================== ESP RINGS
